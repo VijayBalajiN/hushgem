@@ -121,6 +121,27 @@ h1,h2,h3,p{margin:0}
 .mis-l{font-size:12px;color:var(--velvet-mut);line-height:1.3}
 .mis-l.hot{color:var(--on-velvet)}
 
+/* timer, history, review */
+.timer{border:1px solid var(--line);border-radius:8px;padding:6px 10px;font-size:13px;display:flex;flex-direction:column;gap:5px}
+.timer .tl{display:flex;justify-content:space-between;gap:8px;color:var(--muted)}
+.timer .tl b{font-family:var(--mono);color:var(--ink)}
+.timer .tbar{height:5px;background:var(--sunk);border-radius:3px;overflow:hidden}
+.timer .tbar i{display:block;height:100%;width:100%;background:var(--action)}
+.timer.low .tbar i{background:var(--warn)}.timer.low .tl b{color:var(--warn)}
+.coachsw{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:500;cursor:pointer;margin-top:6px}
+.coachsw input{width:16px;height:16px;accent-color:var(--action)}
+.hist-tools{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:6px 0 8px}
+.hist-tools .btn{padding:5px 10px;font-size:13px}.hist-tools .btn[aria-pressed="true"]{border-color:var(--action);color:var(--action)}
+.linechart{width:100%;height:auto;display:block}
+.linechart text{fill:var(--muted);font-size:11px;font-family:var(--mono)}
+.linechart .grid{stroke:var(--line);stroke-width:1}
+.linechart .you-l{fill:var(--ink);font-weight:700}
+.legend{display:flex;flex-wrap:wrap;gap:6px 16px;font-size:13px;margin-top:6px}
+.legend span{display:inline-flex;align-items:center;gap:6px}
+.legend i{width:14px;height:4px;border-radius:2px;display:inline-block}
+.hist-tbl td.bids{font-size:12.5px;color:var(--muted)}
+.hist-tbl td.bids b{color:var(--ink);font-family:var(--mono)}
+
 /* auction */
 .stage{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);grid-template-areas:"lot bid" "coach bid";grid-template-rows:auto 1fr;gap:16px}
 .s-lot{grid-area:lot;min-width:0}.s-bid{grid-area:bid;min-width:0}.s-coach{grid-area:coach;min-width:0}
@@ -298,7 +319,14 @@ button.hg:hover{border-color:var(--action);transform:translateY(-1px)}
           <option value="E">E &middot; Peak at three</option>
         </select>
       </label>
-      <label class="switch" for="chkCoach"><input type="checkbox" id="chkCoach"> Coach</label>
+      <label class="field solo-only" for="selMode">Mode
+        <select id="selMode"><option value="standard">Standard (no help)</option><option value="learner">Learner (coach on)</option></select>
+      </label>
+      <label class="field solo-only" for="selTimer">Bid timer
+        <select id="selTimer"><option value="0">Off</option><option value="20">20 s after first bid</option></select>
+      </label>
+      <button class="btn" id="btnHist" type="button" aria-expanded="false">History</button>
+      <button class="btn" id="btnRev" type="button" aria-expanded="false">Review game</button>
       <button class="btn" id="btnRules" type="button" aria-expanded="false" aria-controls="rules">Rules</button>
       <button class="btn" id="btnTable" type="button" hidden>Play with friends</button>
       <button class="btn" id="btnLeave" type="button" hidden>Back to solo</button>
@@ -316,6 +344,7 @@ button.hg:hover{border-color:var(--action);transform:translateY(-1px)}
     <p class="note">These rules are written in our own words and may differ from the original game in small ways. The bots bid by a simple value-per-coin rule and are a sparring partner, not the strongest players.</p>
   </section>
 
+  <section class="panel" id="hist" hidden></section>
   <section class="panel" id="lobby" hidden></section>
   <section class="panel tablebar" id="tablebar" hidden aria-live="polite"></section>
 
@@ -969,17 +998,21 @@ const CHART_NAMES={A:'Rising line',B:'Falling line',C:'Rising curve',D:'Falling 
 function load(key,def){try{const v=JSON.parse(localStorage.getItem(key));return v&&typeof v==='object'?Object.assign({},def,v):def;}catch(e){return def;}}
 function save(key,v){try{localStorage.setItem(key,JSON.stringify(v));}catch(e){}}
 
-const cfg=load('hushgem:cfg',{players:4,chart:'A',coach:true});
+const cfg=load('hushgem:cfg',{players:4,chart:'A',coach:true,mode:null,timer:0});
+if(cfg.mode!=='standard'&&cfg.mode!=='learner')cfg.mode=cfg.coach===false?'standard':'learner';
+if(cfg.timer!==20)cfg.timer=0;
+const coachOn=()=>cfg.mode==='learner'&&!!cfg.coach;
+const learner=()=>cfg.mode==='learner';
 const rec=load('hushgem:rec',{games:0,wins:0,best:null});
 let G=null,ME=0;
-const ui={stage:'bid',bid:'',last:null,focus:true,counted:false};
+const ui={stage:'bid',bid:'',last:null,focus:true,counted:false,gid:0,panel:null,metric:'cash'};
 
 const gem=(c,cls)=>`<svg class="gem c${c} ${cls||''}" viewBox="0 0 32 32" aria-hidden="true"><use href="#g${c}"/></svg>`;
 const gems=(list,cls)=>list.map(c=>gem(c,cls)).join('');
 const coinDot=cls=>`<i class="coin ${cls||''}" aria-hidden="true"></i>`;
 
 function newGame(){
-  ME=0;G=E.createGame({players:cfg.players,chart:cfg.chart});
+  ME=0;G=E.createGame({players:cfg.players,chart:cfg.chart});ui.gid++;
   ui.stage='bid';ui.bid='';ui.last=null;ui.focus=true;ui.counted=false;
   render();
 }
@@ -1027,7 +1060,7 @@ function slotChart(c,bel){
     const v=ch[k],h=Math.max(1.5,v/20*30),x=5+k*19,y=46-h;
     const imp=k<Math.min(5,floor);
     const p=bel.pmf[c][k];
-    const op=imp?1:(cfg.coach?(.2+.8*p/maxP):.9);
+    const op=imp?1:(coachOn()?(.2+.8*p/maxP):.9);
     bars+=`<rect class="bar${imp?' imp':''}" x="${x}" y="${y}" width="15" height="${h}" rx="2" style="${imp?'':'fill-opacity:'+op.toFixed(2)}"/>`
       +`<text class="v" x="${x+7.5}" y="${y-2.5}" font-size="8.5" text-anchor="middle">${v}</text>`
       +`<text x="${x+7.5}" y="58" font-size="8.5" text-anchor="middle">${k===5?'5+':k}</text>`;
@@ -1047,7 +1080,7 @@ function tray(){
       <div class="slot-f">
         <div><span>Shown</span><b>${r}</b></div>
         <div><span>Each now</span><b>${ch[Math.min(5,r)]}</b></div>
-        ${cfg.coach?`<div><span>Expect end</span><b>${fmt(Math.round(bel.ev[c]*10)/10)}</b></div>`:''}
+        ${coachOn()?`<div><span>Expect end</span><b>${fmt(Math.round(bel.ev[c]*10)/10)}</b></div>`:''}
         <div><span>In your hand</span><b>${bel.mine[c]}</b></div>
       </div></div>`;
   }).join('');
@@ -1075,7 +1108,7 @@ function tray(){
     </div>`;
   }).join('');
   $('tray').innerHTML=`
-    <div><div class="ph"><h2>Value display</h2><span class="hint">Chart ${G.chart} &middot; ${CHART_NAMES[G.chart]}. The ringed bar is the count shown now; each bar is points per gem you bought.${cfg.coach?' Brighter bars are likelier final counts.':''}</span></div>
+    <div><div class="ph"><h2>Value display</h2><span class="hint">Chart ${G.chart} &middot; ${CHART_NAMES[G.chart]}. The ringed bar is the count shown now; each bar is points per gem you bought.${coachOn()?' Brighter bars are likelier final counts.':''}</span></div>
     <div class="slots">${slots}</div></div>
     <div><div class="ph"><h2>Missions</h2><span class="hint">Complete one with gems you buy. The first to finish takes it, paid in coins at the end.</span></div>
     <div class="missions">${mis}</div></div>`;
@@ -1094,7 +1127,7 @@ function lotView(){
     <div class="lot-d">You get ${lot.amt} coins now and owe ${lot.amt} at the end. Your bid is the fee, paid out of the loan, and you may bid more than your cash.</div>`;
 }
 function coachHtml(){
-  if(!cfg.coach)return '';
+  if(!coachOn())return '';
   const s=E.suggest(G,ME),lot=G.lot;
   const lam=`<div class="l"><span>What a coin buys now</span><b>&times;${s.lam.toFixed(2)}</b></div>`;
   let body='';
@@ -1116,7 +1149,7 @@ function coachHtml(){
   return `<div class="coach"><div class="ct">Coach</div>${body}</div>`;
 }
 function bidPanel(){
-  const mc=E.maxBid(G,ME),lot=G.lot,s=cfg.coach?E.suggest(G,ME):null;
+  const mc=E.maxBid(G,ME),lot=G.lot,s=coachOn()?E.suggest(G,ME):null;
   const sg=s?Math.min(mc,Math.round(s.max)):null;
   const chips=[`<button type="button" class="chip" data-act="set" data-v="0">0</button>`];
   if(s)chips.push(`<button type="button" class="chip" data-act="set" data-v="${sg}">Break-even ${sg}</button>`);
@@ -1131,6 +1164,7 @@ function bidPanel(){
     <div class="bidmeta"><span>Cash ${coinDot('sm')} <b class="mono">${G.coins[ME]}</b></span><span>${lot.kind==='loan'?`Loans let you bid up to <b class="mono">${mc}</b>`:`Max bid <b class="mono">${mc}</b>`}</span></div>
     <div class="chips">${chips.join('')}</div>
     <div class="err" id="bidErr" role="alert"></div>
+    <div class="timer" id="timer" hidden><div class="tl"><span id="tlab"></span><b id="tsec"></b></div><div class="tbar"><i id="tfill"></i></div></div>
     <button class="btn primary big" type="submit">Seal bid</button>
   </form>`;
 }
@@ -1154,7 +1188,7 @@ function lastHtml(){
   let what='';
   if(r.lot.kind==='gems'){
     what=`<span class="gs">${w} won ${gems(r.gems,'')} for <b class="mono">${r.price}</b></span>`;
-    if(you&&r.fair!=null)what+=`<span class="muted">Your lot was worth about ${fmt(Math.round(r.fair*10)/10)} when you bid.</span>`;
+    if(you&&r.fair!=null&&learner())what+=`<span class="muted">Your lot was worth about ${fmt(Math.round(r.fair*10)/10)} when you bid.</span>`;
   }else if(r.lot.kind==='invest'){
     what=`<span>${w} locked <b class="mono">${r.price}</b> in Invest ${r.lot.amt} and will get +${r.lot.amt} back at the end.</span>`;
   }else{
@@ -1170,6 +1204,9 @@ function lastHtml(){
     <div class="what">${what}</div>
     <ul class="bids">${sorted.map(x=>`<li class="${x.p===r.winner?'w':''}"><span>${esc(G.names[x.p])}${x.p===r.winner?' &middot; winner':''}</span><b>${x.b}</b></li>`).join('')}</ul></div>`;
 }
+function coachSwitch(){
+  return learner()&&ui.stage==='bid'?`<label class="coachsw"><input type="checkbox" id="chkCoach"${cfg.coach?' checked':''}> Show coach</label>`:'';
+}
 function auction(){
   if(G.done){$('auction').innerHTML=finalHtml();return;}
   const deckLeft=G.gemDeck.length;
@@ -1180,7 +1217,7 @@ function auction(){
         <div class="row-g"><span class="it"><i class="deck"></i>Gem deck <b>${deckLeft}</b></span>
           <span class="it">Face up ${G.visible.length?gems(G.visible,'sm'):'<b>none</b>'}</span></div></div>
       <div class="s-bid">${bidArea()}</div>
-      <div class="s-coach">${ui.stage==='bid'?coachHtml():''}</div>
+      <div class="s-coach">${ui.stage==='bid'?coachHtml():''}${coachSwitch()}</div>
     </div>${lastHtml()}`;
   if(ui.stage==='bid'&&ui.focus){const el=$('bid');if(el){el.focus({preventScroll:true});}}
   ui.focus=false;
@@ -1194,14 +1231,14 @@ function finalHtml(){
   const audit=my.length?my.map(w=>{
     const real=sum(w.gems.map(c=>E.CHARTS[G.chart][Math.min(5,G.display[c])]));
     const net=real-w.paid;
-    return `<tr><td>Lot ${w.round}</td><td class="gl">${gems(w.gems,'sm')}</td><td>${w.paid}</td><td>${fmt(Math.round(w.fair*10)/10)}</td><td>${real}</td><td class="${net>=0?'pos':'neg'}">${net>0?'+':''}${net}</td></tr>`;
+    return `<tr><td>Lot ${w.round}</td><td class="gl">${gems(w.gems,'sm')}</td><td>${w.paid}</td>${learner()?`<td>${fmt(Math.round(w.fair*10)/10)}</td>`:''}<td>${real}</td><td class="${net>=0?'pos':'neg'}">${net>0?'+':''}${net}</td></tr>`;
   }).join(''):'';
   const disp=C.map((c,i)=>`<span class="cg">${gem(i,'sm')}${G.display[i]}</span>`).join(' ');
   return `<div class="final"><div class="ph"><h2>${youWon?(winners.length>1?'You tied for the win':'You win'):esc(winners.join(' and '))+' won'}</h2><span class="hint">Chart ${G.chart} &middot; ${CHART_NAMES[G.chart]} &middot; ${G.round} lots</span></div>
     <div class="tbl"><table><thead><tr><th>Player</th><th>Coins</th><th>Invested</th><th>Gems</th><th>Missions</th><th>Loans</th><th>Score</th></tr></thead><tbody>${rows}</tbody></table></div>
     <h3>Final display</h3><div class="coll" style="margin-top:6px">${disp}</div>
-    ${audit?`<h3>Your gem lots</h3><div class="tbl"><table><thead><tr><th>Lot</th><th class="gl">Gems</th><th>You paid</th><th>Coach valued</th><th>Gems scored</th><th>Net</th></tr></thead><tbody>${audit}</tbody></table></div>
-      <p class="cap">Net is gem points minus what you paid, with coins counted one for one. Coach valued is the expected gem value when you bid, before any mission bonus.</p>`:''}
+    ${audit?`<h3>Your gem lots</h3><div class="tbl"><table><thead><tr><th>Lot</th><th class="gl">Gems</th><th>You paid</th>${learner()?'<th>Coach valued</th>':''}<th>Gems scored</th><th>Net</th></tr></thead><tbody>${audit}</tbody></table></div>
+      <p class="cap">Net is gem points minus what you paid, with coins counted one for one.${learner()?' Coach valued is the expected gem value when you bid, before any mission bonus.':''}</p>`:''}
     ${finalActs()}</div>`;
 }
 function seats(){
@@ -1246,7 +1283,126 @@ function record(){
     <div class="rec"><span><b>${rec.wins}/${rec.games}</b>wins</span><span><b>${rec.best==null?'&ndash;':rec.best}</b>best score</span><span><b>${G.startCoins}</b>start coins</span></div>`;
 }
 function render(){
-  tray();auction();seats();hand();tape();record();
+  tray();auction();seats();hand();tape();record();histPanel();timerTick();
+}
+
+/* ---------- bid timer ---------- */
+const TM={key:'',start:0};
+const timerSecs=()=>MP.on?MP.tm:cfg.timer;
+function othersSealed(){
+  if(!MP.on||!MP.R||!MP.R.s||G.phase!=='bid')return false;
+  return G.names.some((_,p)=>p!==ME&&!isBot(p)&&E.getBid(MP.R,G.round,p)!=null);
+}
+function timerTick(){
+  const el=$('timer');if(!el)return;
+  const secs=timerSecs();
+  if(!secs||!G||G.done||ui.stage!=='bid'){el.hidden=true;return;}
+  const key=(MP.on?'m'+MP.R.e:'s'+ui.gid)+':'+G.round;
+  if(TM.key!==key){TM.key=key;TM.start=0;}
+  if(!TM.start&&(ui.bid!==''||othersSealed()))TM.start=Date.now();
+  el.hidden=false;
+  if(!TM.start){
+    el.classList.remove('low');
+    $('tlab').textContent=`${secs} s to seal, starting at the first bid`;$('tsec').textContent='';$('tfill').style.width='100%';
+    return;
+  }
+  const left=secs*1000-(Date.now()-TM.start);
+  if(left<=0){
+    TM.start=Date.now()+1e12;
+    el.hidden=true;
+    sealBid();
+    return;
+  }
+  el.classList.toggle('low',left<=5000);
+  $('tlab').textContent='Time left';$('tsec').textContent=Math.ceil(left/1000)+' s';
+  $('tfill').style.width=(left/(secs*1000)*100).toFixed(1)+'%';
+}
+setInterval(timerTick,200);
+
+/* ---------- history and review ---------- */
+const LINE_COLORS=['#2f6fed','#e0662b','#1f9d6b','#a23fcf','#c9a000'];
+function histPanel(){
+  const el=$('hist');
+  const hasG=!!G&&!(MP.on&&!mpInGame());
+  $('btnHist').setAttribute('aria-expanded',String(ui.panel==='history'));
+  $('btnRev').setAttribute('aria-expanded',String(ui.panel==='review'));
+  if(!hasG||!ui.panel){el.hidden=true;return;}
+  el.hidden=false;
+  el.innerHTML=ui.panel==='history'?historyHtml():reviewHtml();
+}
+function lotText(r){
+  if(r.lot.kind==='gems')return r.gems.length?gems(r.gems,'sm'):'nothing';
+  return r.lot.kind==='invest'?`Invest ${r.lot.amt}`:`Loan ${r.lot.amt}`;
+}
+function historyHtml(){
+  const rows=G.history.map(r=>{
+    const bids=r.bids.map((b,p)=>({b,p})).sort((x,y)=>y.b-x.b||x.p-y.p).map(x=>`${x.p===r.winner?'<b>':''}${esc(G.names[x.p])} ${x.b}${x.p===r.winner?'</b>':''}`).join(' &middot; ');
+    const kind=r.lot.kind==='gems'?(r.lot.gems===1?'1 Gem':'2 Gems'):(r.lot.kind==='invest'?'Invest '+r.lot.amt:'Loan '+r.lot.amt);
+    const mi=r.missions.map(m=>`<span class="mchip">${m.shape} +${m.pts}</span>`).join(' ');
+    return `<tr><td>${r.round}</td><td>${kind}</td><td class="gl">${r.lot.kind==='gems'?lotText(r):''}</td><td>${esc(G.names[r.winner])}${r.winner===ME?' (you)':''}</td><td class="mono">${r.price}</td><td class="bids">${bids}${r.tieNote?' &middot; '+esc(r.tieNote):''}</td><td>${r.revealed!=null?gem(r.revealed,'sm'):''}</td><td>${mi}</td></tr>`;
+  }).reverse().join('');
+  return `<div class="ph"><h2>History</h2><span class="hint">${G.history.length} auction${G.history.length===1?'':'s'} completed. Newest first. Bids are shown once a lot is sold.</span></div>
+    ${rows?`<div class="tbl"><table class="hist-tbl"><thead><tr><th>Lot</th><th>Type</th><th class="gl">Gems</th><th>Winner</th><th>Paid</th><th>All bids</th><th>Revealed</th><th>Missions</th></tr></thead><tbody>${rows}</tbody></table></div>`:'<p class="empty">No auction has finished yet.</p>'}`;
+}
+function moneySeries(metric){
+  const n=G.n,cash=Array(n).fill(G.startCoins),lock=Array(n).fill(0),ret=Array(n).fill(0),loan=Array(n).fill(0),ms=Array(n).fill(0);
+  const val=p=>metric==='cash'?cash[p]:cash[p]+lock[p]+ret[p]+ms[p]-loan[p];
+  const out=Array.from({length:n},(_,p)=>[val(p)]);
+  G.history.forEach(r=>{
+    const w=r.winner;
+    if(r.lot.kind==='gems')cash[w]-=r.price;
+    else if(r.lot.kind==='invest'){cash[w]-=r.price;lock[w]+=r.price;ret[w]+=r.lot.amt;}
+    else{cash[w]+=r.lot.amt-r.price;loan[w]+=r.lot.amt;}
+    r.missions.forEach(m=>{ms[w]+=m.pts;});
+    for(let p=0;p<n;p++)out[p].push(val(p));
+  });
+  return out;
+}
+function reviewHtml(){
+  const metric=ui.metric,ser=moneySeries(metric),n=G.n,N=G.history.length;
+  const fin=G.done&&metric==='net'?G.scores.map(s=>s.total):null;
+  if(fin)ser.forEach((a,p)=>a.push(fin[p]));
+  const pts=ser[0].length;
+  const all=[].concat(...ser);
+  let lo=Math.min(0,...all),hi=Math.max(...all,1);
+  const step=[1,2,5,10,20,25,50].find(s=>(hi-lo)/s<=6)||100;
+  lo=Math.floor(lo/step)*step;hi=Math.ceil(hi/step)*step;
+  const W=680,H=320,L=40,R=96,T=14,B=34,pw=W-L-R,ph=H-T-B;
+  const X=i=>L+(pts>1?i/(pts-1)*pw:0),Y=v=>T+(hi-v)/(hi-lo)*ph;
+  let g='';
+  for(let v=lo;v<=hi;v+=step)g+=`<line class="grid" x1="${L}" x2="${W-R}" y1="${Y(v)}" y2="${Y(v)}"/><text x="${L-6}" y="${Y(v)+4}" text-anchor="end">${v}</text>`;
+  const every=Math.ceil(pts/14);
+  for(let i=0;i<pts;i++){
+    if(i%every&&i!==pts-1)continue;
+    const lab=fin&&i===pts-1?'End':String(i);
+    g+=`<text x="${X(i)}" y="${H-14}" text-anchor="middle">${lab}</text>`;
+  }
+  g+=`<text x="${L+pw/2}" y="${H-1}" text-anchor="middle">after lot</text>`;
+  const order=[...Array(n).keys()].sort((a,b)=>(a===ME)-(b===ME));
+  const labels=[];
+  order.forEach(p=>{
+    const c=LINE_COLORS[p%5],w=p===ME?3.5:2;
+    const d=ser[p].map((v,i)=>(i?'L':'M')+X(i).toFixed(1)+' '+Y(v).toFixed(1)).join(' ');
+    g+=`<path d="${d}" fill="none" stroke="${c}" stroke-width="${w}" stroke-linejoin="round" stroke-linecap="round"${fin?'':''}/>`;
+    ser[p].forEach((v,i)=>{
+      const t=i===0?'Start':(fin&&i===pts-1?'Final score':'After lot '+i);
+      g+=`<circle cx="${X(i).toFixed(1)}" cy="${Y(v).toFixed(1)}" r="${p===ME?3.5:2.6}" fill="${c}"><title>${esc(G.names[p])} &middot; ${t}: ${v}</title></circle>`;
+    });
+    labels.push({p,y:Y(ser[p][pts-1])});
+  });
+  labels.sort((a,b)=>a.y-b.y);
+  for(let i=1;i<labels.length;i++)if(labels[i].y-labels[i-1].y<12)labels[i].y=labels[i-1].y+12;
+  labels.forEach(l=>{g+=`<text class="${l.p===ME?'you-l':''}" x="${W-R+6}" y="${l.y+4}">${esc(G.names[l.p])}</text>`;});
+  const legend=Array.from({length:n},(_,p)=>`<span><i style="background:${LINE_COLORS[p%5]}"></i>${esc(G.names[p])}${p===ME?' (you)':''} <b class="mono">${ser[p][pts-1]}</b></span>`).join('');
+  const note=metric==='cash'
+    ?'Cash is the coins you can spend. It falls when you win and rises when you take a loan.'
+    :`Net coins is cash plus locked invests and their returns, plus missions, minus loans.${G.done?' The last point is the final score, where gems are added.':' Gems are not counted until the game ends.'}`;
+  return `<div class="ph"><h2>Review game</h2><span class="hint">${N} auction${N===1?'':'s'} so far. Hover a point for the exact value.</span></div>
+    <div class="hist-tools"><span class="muted small">Show</span>
+      <button class="btn" type="button" data-act="metric" data-m="cash" aria-pressed="${metric==='cash'}">Cash</button>
+      <button class="btn" type="button" data-act="metric" data-m="net" aria-pressed="${metric==='net'}">Net coins</button></div>
+    ${N?`<svg class="linechart" viewBox="0 0 ${W} ${H}" role="img" aria-label="Line graph of each player's ${metric==='cash'?'cash':'net coins'} after every auction">${g}</svg>
+      <div class="legend">${legend}</div><p class="cap">${note}</p>`:'<p class="empty">The graph starts after the first auction.</p>'}`;
 }
 
 /* ---------- events ---------- */
@@ -1255,7 +1411,7 @@ function setBid(v){
   v=Math.max(0,Math.min(mc,Math.floor(Number(v)||0)));
   ui.bid=String(v);
   const el=$('bid');if(el){el.value=ui.bid;el.focus({preventScroll:true});}
-  const er=$('bidErr');if(er)er.textContent='';
+  const er=$('bidErr');if(er)er.textContent='';timerTick();
 }
 document.addEventListener('click',e=>{
   const t=e.target.closest('[data-act]');if(!t)return;
@@ -1270,8 +1426,9 @@ document.addEventListener('click',e=>{
   else if(a==='dec')setBid((Number(ui.bid)||0)-1);
   else if(a==='pick')pickGem(Number(t.dataset.c));
   else if(a==='new')newGame();
+  else if(a==='metric'){ui.metric=t.dataset.m;histPanel();}
 });
-document.addEventListener('input',e=>{if(e.target.id==='bid'){ui.bid=e.target.value;const er=$('bidErr');if(er)er.textContent='';}});
+document.addEventListener('input',e=>{if(e.target.id==='bid'){ui.bid=e.target.value;const er=$('bidErr');if(er)er.textContent='';timerTick();}});
 document.addEventListener('submit',e=>{
   e.preventDefault();
   if(e.target.id==='joinForm'){mpEnter($('joincode').value,false);return;}
@@ -1284,7 +1441,11 @@ document.addEventListener('submit',e=>{
 });
 $('selPlayers').addEventListener('change',e=>{cfg.players=Number(e.target.value);save('hushgem:cfg',cfg);newGame();});
 $('selChart').addEventListener('change',e=>{cfg.chart=e.target.value;save('hushgem:cfg',cfg);newGame();});
-$('chkCoach').addEventListener('change',e=>{cfg.coach=e.target.checked;save('hushgem:cfg',cfg);render();});
+$('selMode').addEventListener('change',e=>{cfg.mode=e.target.value;if(cfg.mode==='learner')cfg.coach=true;save('hushgem:cfg',cfg);newGame();});
+$('selTimer').addEventListener('change',e=>{cfg.timer=Number(e.target.value)===20?20:0;save('hushgem:cfg',cfg);newGame();});
+function togglePanel(name){ui.panel=ui.panel===name?null:name;histPanel();}
+$('btnHist').addEventListener('click',()=>togglePanel('history'));
+$('btnRev').addEventListener('click',()=>togglePanel('review'));
 $('btnNew').addEventListener('click',newGame);
 $('btnRules').addEventListener('click',()=>{
   const r=$('rules');r.hidden=!r.hidden;$('btnRules').setAttribute('aria-expanded',String(!r.hidden));
@@ -1294,7 +1455,7 @@ $('btnRules').addEventListener('click',()=>{
 /* A table is a named room. Every player's page rebuilds the same seeded game from the sealed bids and reveals that
    players publish in their presence, so no server and no host machine is needed once the game has started. */
 const MP={on:false,avail:false,room:null,uid:'',name:'',ch:null,code:'',host:false,t:0,R:null,sent:'',view:'entry',err:'',busy:false,
-  unsub:[],timer:null,sawHost:false,conn:true,cfg:{n:4,chart:'A'},seat:-1,wait:null,peers:[],online:new Set(),roster:[],
+  unsub:[],timer:null,sawHost:false,conn:true,cfg:{n:4,chart:'A',tm:0},tm:0,seat:-1,wait:null,peers:[],online:new Set(),roster:[],
   desync:false,ck:'',sig:'',solo:null,ready:null,lastCode:''};
 const CODE_CHARS='ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 const newCode=()=>Array.from({length:4},()=>CODE_CHARS[Math.floor(Math.random()*CODE_CHARS.length)]).join('');
@@ -1336,6 +1497,8 @@ function showMode(){
   $('btnLeave').textContent=game?'Leave table':'Back to solo';
   $('lobby').hidden=!(MP.on&&!game);
   $('tablebar').hidden=!game;
+  $('btnHist').hidden=$('btnRev').hidden=MP.on&&!game;
+  if(MP.on&&!game){ui.panel=null;$('hist').hidden=true;}
   document.querySelector('.layout').hidden=MP.on&&!game;
 }
 async function openTable(){
@@ -1409,6 +1572,8 @@ function mpRefresh(force){
     if(x)R=E.mergeRecords(R,x);
   }
   if(R.e!==MP.R.e){ui.counted=false;ui.bid='';}
+  {const hp=peers.find(p=>p.presence&&p.presence.h===1),hc=hp&&hp.presence.cfg;
+   if(MP.host)MP.tm=MP.cfg.tm===20?20:0;else if(hc&&typeof hc==='object')MP.tm=hc.tm===20?20:0;}
   MP.R=R;
   MP.online=new Set(peers.map(peerUid).filter(Boolean));
   MP.roster=rosterOf(peers);
@@ -1529,6 +1694,9 @@ function entryHtml(){
       <p class="muted small">Every player&rsquo;s browser runs the same game from the bids that are shared, so this is for friendly practice. Anyone who opens developer tools could look at hidden hands.${window.__mgHosted?' Tables travel through free public relays, so anyone who guesses a table code could watch that table.':''}</p>
     </div>`;
 }
+function modePick(){
+  return `<label class="field" style="max-width:260px">Your help (only you see it)<select id="mpMode"><option value="standard"${cfg.mode==='standard'?' selected':''}>Standard (no help)</option><option value="learner"${cfg.mode==='learner'?' selected':''}>Learner (coach on)</option></select></label>`;
+}
 function roomHtml(){
   const R=MP.R,people=MP.roster,started=!!R.s;
   const hostPeer=MP.peers.find(p=>p.presence&&p.presence.h===1);
@@ -1544,10 +1712,12 @@ function roomHtml(){
   if(started)body='<p class="notice">A game is already running at this table and you are not seated in it. You will be seated when the host starts the next one.</p>';
   else if(MP.host)body=`<div class="hostctl">
       <label class="field">Seats<select id="mpSeats">${[3,4,5].map(n=>`<option value="${n}"${MP.cfg.n===n?' selected':''}>${n} seats</option>`).join('')}</select></label>
+      <label class="field">Bid timer<select id="mpTimer"><option value="0"${MP.cfg.tm!==20?' selected':''}>Off</option><option value="20"${MP.cfg.tm===20?' selected':''}>20 s after first bid</option></select></label>
       <label class="field">Value chart<select id="mpChart">${Object.keys(CHART_NAMES).map(k=>`<option value="${k}"${MP.cfg.chart===k?' selected':''}>${k} &middot; ${CHART_NAMES[k]}</option>`).join('')}</select></label>
       <button class="btn primary big" type="button" data-act="mpstart">Start game</button></div>
+    ${modePick()}
     <p class="muted small">${people.length} ${people.length===1?'person is':'people are'} here${bots?`, so ${bots} bot seat${bots>1?'s':''} will be filled by ${E.PERSONAS.slice(0,bots).map(x=>x.name).join(', ')}`:''}. Start when everyone has joined.</p>`;
-  else body=hostPeer?`<p class="notice">Waiting for ${esc(hostName)} to start the game.${hostCfg?` Table: ${hostCfg.n} seats, chart ${hostCfg.chart}.`:''}</p>`
+  else body=hostPeer?`<p class="notice">Waiting for ${esc(hostName)} to start the game.${hostCfg?` Table: ${hostCfg.n} seats, chart ${hostCfg.chart}${hostCfg.tm===20?', 20 s bid timer':''}.`:''}</p>${modePick()}`
     :MP.sawHost?'<p class="notice">The host has left this table, so it cannot start. Go back and host a new one.</p>':'<p class="notice">Looking for table '+esc(MP.code)+'&hellip;</p>';
   return `<div class="ph"><h2>Table ${esc(MP.code)}</h2><span class="hint">${MP.conn?'Connected':'Reconnecting'}</span></div>
     <div class="lobby">
@@ -1560,11 +1730,14 @@ function roomHtml(){
 document.addEventListener('change',e=>{
   if(e.target.id==='mpSeats'){MP.cfg.n=Number(e.target.value);mpPush();mpRefresh(true);}
   else if(e.target.id==='mpChart'){MP.cfg.chart=e.target.value;mpPush();mpRefresh(true);}
+  else if(e.target.id==='mpTimer'){MP.cfg.tm=Number(e.target.value)===20?20:0;MP.tm=MP.cfg.tm;mpPush();mpRefresh(true);}
+  else if(e.target.id==='mpMode'){cfg.mode=e.target.value;if(cfg.mode==='learner')cfg.coach=true;save('hushgem:cfg',cfg);}
+  else if(e.target.id==='chkCoach'){cfg.coach=e.target.checked;save('hushgem:cfg',cfg);render();}
 });
 $('btnTable').addEventListener('click',openTable);
 $('btnLeave').addEventListener('click',mpLeave);
 
-$('selPlayers').value=String(cfg.players);$('selChart').value=cfg.chart;$('chkCoach').checked=!!cfg.coach;
+$('selPlayers').value=String(cfg.players);$('selChart').value=cfg.chart;$('selMode').value=cfg.mode;$('selTimer').value=String(cfg.timer);
 newGame();
 MP.ready=mpInit();
 })();

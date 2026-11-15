@@ -6,7 +6,10 @@ Hushgem is not affiliated with or endorsed by Jane Street. It uses none of the o
 
 - 3 to 5 players, sealed-bid auctions for gems, the value chart, missions, and a hidden hand.
 - Bots: dumEinstein, aniket, tweakinn and reeshabh fill any empty seat.
-- A coach panel shows the expected value of each lot from what has been revealed so far.
+- **Modes:** Standard has no help. Learner shows the coach (expected values, break-even bids) and gives a Show coach switch during the game. The mode is chosen before the game starts.
+- **Bid timer (optional):** 20 seconds to seal once the first bid is entered. When it runs out, the bid in the box is sealed (0 if empty). At a live table, the host sets the timer and it also starts when another player seals first.
+- **History:** every completed auction with all bids, winner, price and revealed gem.
+- **Review game:** line graph of every player's cash or net coins after each auction.
 
 ## Play
 
