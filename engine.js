@@ -251,7 +251,9 @@ function advance(g){
   refill(g);
   g.lastWinner=w;
   g.history.push(res);
-  if((g.gemDeck.length===0&&g.visible.length===0)||!g.auctionDeck.length){finish(g);return g;}
+  // Once the last gem is bought, gem lots cannot be played, but the Invest and Loan cards still left in the deck are.
+  if(g.gemDeck.length===0&&g.visible.length===0)g.auctionDeck=g.auctionDeck.filter(c=>c.kind!=='gems');
+  if(!g.auctionDeck.length){finish(g);return g;}
   g.round++;g.lot=g.auctionDeck.pop();g.phase='bid';g.result=null;
   return g;
 }
@@ -282,6 +284,7 @@ function suggest(g,p){
     return {kind:'gems',gems:lv.gems,gv:lv.gv,mission:lv.mission,missions:lv.missions,total:lv.total,lam,max:lv.total/lam};
   }
   if(lot.kind==='invest'){
+    if(!g.visible.length&&!g.gemDeck.length)return {kind:'invest',lam,max:coins};
     return {kind:'invest',lam,max:lam<1.08?coins*.5:Math.min(lot.amt/(lam-1),coins*.5)};
   }
   const use=coins<8?1:coins<16?.6:coins<26?.3:.1;
