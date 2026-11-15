@@ -249,6 +249,8 @@ function advance(g){
     });
   }
   refill(g);
+  // What each player's gems are expected to be worth at this moment, from that player's own point of view (for the review graph).
+  res.evHeld=g.coll.map((cl,p)=>{const b=belief(g,p);return sum(cl.map((n,c)=>n*b.ev[c]));});
   g.lastWinner=w;
   g.history.push(res);
   // Once the last gem is bought, gem lots cannot be played, but the Invest and Loan cards still left in the deck are.

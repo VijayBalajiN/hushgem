@@ -131,6 +131,13 @@ h1,h2,h3,p{margin:0}
 .legend{display:flex;flex-wrap:wrap;gap:6px 16px;font-size:13px;margin-top:6px}
 .legend span{display:inline-flex;align-items:center;gap:6px}
 .legend i{width:14px;height:4px;border-radius:2px;display:inline-block}
+.pgrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+@media (max-width:900px){.pgrid{grid-template-columns:minmax(0,1fr)}}
+.pcard{border:1px solid var(--line);border-radius:10px;padding:10px 12px;min-width:0}
+.pcard h3{margin:0 0 6px;display:flex;align-items:center;gap:8px;font-size:15px}.pcard h3 i{width:12px;height:12px;border-radius:50%;display:inline-block}
+.pcs{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+@media (max-width:560px){.pcs{grid-template-columns:minmax(0,1fr)}}
+.pc h4{margin:0;font-size:13px}.pcv{font-size:12.5px;color:var(--muted);text-align:right}.pcv b{color:var(--ink)}
 .hist-tbl td.bids{font-size:12.5px;color:var(--muted)}
 .hist-tbl td.bids b{color:var(--ink);font-family:var(--mono)}
 
@@ -376,7 +383,7 @@ const coachOn=()=>cfg.mode==='learner'&&!!cfg.coach;
 const learner=()=>cfg.mode==='learner';
 const rec=load('hushgem:rec',{games:0,wins:0,best:null});
 let G=null,ME=0;
-const ui={stage:'bid',bid:'',last:null,focus:true,counted:false,gid:0,panel:null,metric:'cash'};
+const ui={stage:'bid',bid:'',last:null,focus:true,counted:false,gid:0,panel:null,metric:'value'};
 
 const gem=(c,cls)=>`<svg class="gem c${c} ${cls||''}" viewBox="0 0 32 32" aria-hidden="true"><use href="#g${c}"/></svg>`;
 const gems=(list,cls)=>list.map(c=>gem(c,cls)).join('');
@@ -729,51 +736,68 @@ function moneySeries(metric){
   });
   return out;
 }
-function reviewHtml(){
-  const metric=ui.metric,ser=moneySeries(metric),n=G.n,N=G.history.length;
-  const fin=G.done&&metric==='net'?G.scores.map(s=>s.total):null;
-  if(fin)ser.forEach((a,p)=>a.push(fin[p]));
-  const pts=ser[0].length;
-  const all=[].concat(...ser);
+function lineChart(lines,xl,o){
+  const W=o.W,H=o.H,L=o.L,R=o.R,T=14,B=o.B,pw=W-L-R,ph=H-T-B,pts=xl.length;
+  const all=[].concat(...lines.map(l=>l.vals));
   let lo=Math.min(0,...all),hi=Math.max(...all,1);
-  const step=[1,2,5,10,20,25,50].find(s=>(hi-lo)/s<=6)||100;
+  const step=[1,2,5,10,20,25,50,100].find(s=>(hi-lo)/s<=(o.ticks||6))||200;
   lo=Math.floor(lo/step)*step;hi=Math.ceil(hi/step)*step;
-  const W=680,H=320,L=40,R=96,T=14,B=34,pw=W-L-R,ph=H-T-B;
   const X=i=>L+(pts>1?i/(pts-1)*pw:0),Y=v=>T+(hi-v)/(hi-lo)*ph;
   let g='';
   for(let v=lo;v<=hi;v+=step)g+=`<line class="grid" x1="${L}" x2="${W-R}" y1="${Y(v)}" y2="${Y(v)}"/><text x="${L-6}" y="${Y(v)+4}" text-anchor="end">${v}</text>`;
-  const every=Math.ceil(pts/14);
-  for(let i=0;i<pts;i++){
-    if(i%every&&i!==pts-1)continue;
-    const lab=fin&&i===pts-1?'End':String(i);
-    g+=`<text x="${X(i)}" y="${H-14}" text-anchor="middle">${lab}</text>`;
-  }
-  g+=`<text x="${L+pw/2}" y="${H-1}" text-anchor="middle">after lot</text>`;
-  const order=[...Array(n).keys()].sort((a,b)=>(a===ME)-(b===ME));
+  const every=Math.ceil(pts/(o.xt||14));
+  for(let i=0;i<pts;i++){if(i%every&&i!==pts-1)continue;g+=`<text x="${X(i)}" y="${H-B+16}" text-anchor="middle">${xl[i]}</text>`;}
   const labels=[];
-  order.forEach(p=>{
-    const c=LINE_COLORS[p%5],w=p===ME?3.5:2;
-    const d=ser[p].map((v,i)=>(i?'L':'M')+X(i).toFixed(1)+' '+Y(v).toFixed(1)).join(' ');
-    g+=`<path d="${d}" fill="none" stroke="${c}" stroke-width="${w}" stroke-linejoin="round" stroke-linecap="round"${fin?'':''}/>`;
-    ser[p].forEach((v,i)=>{
-      const t=i===0?'Start':(fin&&i===pts-1?'Final score':'After lot '+i);
-      g+=`<circle cx="${X(i).toFixed(1)}" cy="${Y(v).toFixed(1)}" r="${p===ME?3.5:2.6}" fill="${c}"><title>${esc(G.names[p])} &middot; ${t}: ${v}</title></circle>`;
-    });
-    labels.push({p,y:Y(ser[p][pts-1])});
+  lines.forEach(l=>{
+    const d=l.vals.map((v,i)=>(i?'L':'M')+X(i).toFixed(1)+' '+Y(v).toFixed(1)).join(' ');
+    g+=`<path d="${d}" fill="none" stroke="${l.color}" stroke-width="${l.w||2}"${l.dash?' stroke-dasharray="5 4"':''} stroke-linejoin="round" stroke-linecap="round"/>`;
+    if(!l.dash)l.vals.forEach((v,i)=>{g+=`<circle cx="${X(i).toFixed(1)}" cy="${Y(v).toFixed(1)}" r="${(l.w||2)>2.5?3.5:2.6}" fill="${l.color}"><title>${esc(l.name)} &middot; ${xl[i]==='0'?'Start':'after lot '+xl[i]}: ${fmt(Math.round(v*10)/10)}</title></circle>`;});
+    if(o.endLabels)labels.push({name:l.name,y:Y(l.vals[pts-1]),you:l.you});
   });
   labels.sort((a,b)=>a.y-b.y);
   for(let i=1;i<labels.length;i++)if(labels[i].y-labels[i-1].y<12)labels[i].y=labels[i-1].y+12;
-  labels.forEach(l=>{g+=`<text class="${l.p===ME?'you-l':''}" x="${W-R+6}" y="${l.y+4}">${esc(G.names[l.p])}</text>`;});
-  const legend=Array.from({length:n},(_,p)=>`<span><i style="background:${LINE_COLORS[p%5]}"></i>${esc(G.names[p])}${p===ME?' (you)':''} <b class="mono">${ser[p][pts-1]}</b></span>`).join('');
-  const note=metric==='cash'
-    ?'Cash is the coins you can spend. It falls when you win and rises when you take a loan.'
-    :`Net coins is cash plus locked invests and their returns, plus missions, minus loans.${G.done?' The last point is the final score, where gems are added.':' Gems are not counted until the game ends.'}`;
-  return `<div class="ph"><h2>Review game</h2><span class="hint">${N} auction${N===1?'':'s'} so far. Hover a point for the exact value.</span></div>
-    <div class="hist-tools"><span class="muted small">Show</span>
-      <button class="btn" type="button" data-act="metric" data-m="cash" aria-pressed="${metric==='cash'}">Cash</button>
-      <button class="btn" type="button" data-act="metric" data-m="net" aria-pressed="${metric==='net'}">Net coins</button></div>
-    ${N?`<svg class="linechart" viewBox="0 0 ${W} ${H}" role="img" aria-label="Line graph of each player's ${metric==='cash'?'cash':'net coins'} after every auction">${g}</svg>
-      <div class="legend">${legend}</div><p class="cap">${note}</p>`:'<p class="empty">The graph starts after the first auction.</p>'}`;
+  labels.forEach(l=>{g+=`<text class="${l.you?'you-l':''}" x="${W-R+6}" y="${l.y+4}">${esc(l.name)}</text>`;});
+  return `<svg class="linechart" viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(o.aria)}">${g}</svg>`;
+}
+function reviewHtml(){
+  const metric=ui.metric,n=G.n,N=G.history.length;
+  const tools=`<div class="hist-tools"><span class="muted small">Show</span>
+      <button class="btn" type="button" data-act="metric" data-m="value" aria-pressed="${metric==='value'}">Value per player</button>
+      <button class="btn" type="button" data-act="metric" data-m="cash" aria-pressed="${metric==='cash'}">Cash, everyone</button></div>`;
+  const head=`<div class="ph"><h2>Review game</h2><span class="hint">${N} auction${N===1?'':'s'} so far. Hover a point for the exact value.</span></div>${tools}`;
+  if(!N)return head+'<p class="empty">The graphs start after the first auction.</p>';
+  const xl=Array.from({length:N+1},(_,i)=>String(i));
+  if(metric==='cash'){
+    const ser=moneySeries('cash');
+    const lines=ser.map((v,p)=>({name:G.names[p],color:LINE_COLORS[p%5],vals:v,w:p===ME?3.5:2,you:p===ME}));
+    const legend=ser.map((v,p)=>`<span><i style="background:${LINE_COLORS[p%5]}"></i>${esc(G.names[p])}${p===ME?' (you)':''} <b class="mono">${v[N]}</b></span>`).join('');
+    return head+lineChart(lines.slice().sort((a,b)=>(a.you?1:0)-(b.you?1:0)),xl,{W:680,H:320,L:40,R:96,B:34,endLabels:true,aria:'Cash of each player after every auction'})
+      +`<div class="legend">${legend}</div><p class="cap">Cash is the coins you can spend. It falls when you win and rises when you take a loan.</p>`;
+  }
+  const net=moneySeries('net'),ch=E.CHARTS[G.chart];
+  const coll=Array.from({length:n},()=>Array(5).fill(0)),held=[];
+  for(let i=0;i<=N;i++){
+    if(i>0){const r=G.history[i-1];r.gems.forEach(c=>coll[r.winner][c]++);}
+    held.push(coll.map(a=>a.slice()));
+  }
+  const actual=p=>net[p].map((v,i)=>v+sum(held[i][p].map((k,c)=>k*ch[Math.min(5,G.display[c])])));
+  const expected=p=>net[p].map((v,i)=>{
+    if(i===0)return v;
+    if(G.done&&i===N)return actual(p)[N];
+    const e=G.history[i-1].evHeld;return v+(e?e[p]:0);
+  });
+  const cards=Array.from({length:n},(_,p)=>{
+    const c=LINE_COLORS[p%5],base={name:'Coins and missions, no gems',color:'#8a86a8',vals:net[p],w:1.5,dash:true};
+    const opt={W:420,H:230,L:34,R:10,B:40,xt:9,ticks:5};
+    const a=actual(p),e=expected(p);
+    const one=(title,sub,vals,nm)=>`<div class="pc"><h4>${title}</h4><div class="muted small">${sub}</div>${lineChart([base,{name:nm,color:c,vals,w:3}],xl,Object.assign({aria:title+' for '+G.names[p]},opt))}<div class="pcv">Now <b class="mono">${fmt(Math.round(vals[N]*10)/10)}</b></div></div>`;
+    return `<article class="pcard"><h3><i style="background:${c}"></i>${esc(G.names[p])}${p===ME?' (you)':''}</h3><div class="pcs">`
+      +one('Actual value',G.done?'Gems valued at the final display':'Gems valued at the display as it stands now',a,'Actual value')
+      +one('Expected value','Gems valued at what was expected at that moment',e,'Expected value')
+      +`</div></article>`;
+  }).join('');
+  return head+`<div class="pgrid">${cards}</div>
+    <p class="cap">Each graph is coins, locked invests with their returns, missions and gems, minus loans, after every auction. The dashed grey line is the same without gems. <b>Actual</b> values every gem at the final display${G.done?'':' (the display as it stands now until the game ends)'}, so it shows what each purchase turned out to be worth. <b>Expected</b> values the gems held at the time using that player&rsquo;s own best guess of the final display, which is what they could have known.</p>`;
 }
 
 /* ---------- events ---------- */
